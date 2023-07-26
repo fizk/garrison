@@ -144,6 +144,77 @@ startServer(
 
 ```
 
+## Utilities
+
+### JWT
+This repo comes with a very simple utility function for validating JWT tokens. 
+
+#### The simple one.
+
+The first version of this utility function looks like this:
+```ts
+export function validateJWT (fetchSecret: () => Promise<string>): ValidationHandler
+```
+It is only concerned about the token being valid, not what is inside the token.
+
+Because JWT's verification process requires a **secret**, this function takes in the `fetchSecret: () => Promise<string>` function that should return the **secret** that was used to sign the JWT token. This could be a http request to an _auth server_ or what ever is required.
+
+If the **secret** is already an environment variable, this repo comes with a `getJWTSecretFromEnv` function that simply returns the `JWT_SECRET` environment variable.
+
+It's not a good idea to pass a secret variable to a Docker image when run so the Dockerfile has support for passing the **secret** in at build time by using the `--build-arg arg_jwt_secret=<secret>` argument.
+
+
+```sh
+docker build -t proxy-server --build-arg arg_ssh_key="$(cat $(pwd)/pem/key.pem)" --build-arg arg_ssh_cert="$(cat $(pwd)/pem/cert.pem)" --build-arg arg_jwt_secret=123 .
+```
+
+#### The complicated one.
+If you want to validate the payload inside the JWT token, you can pass in a second argument to the `validateJWT` function. Then the signature looks like this:
+
+```ts
+export type ValidatePayload = (
+    method: Maybe<string>, 
+    headers: IncomingHttpHeaders, 
+    params: Maybe<Record<string, string>>, 
+    query: Maybe<Record<string, string> | undefined>,
+    payload: JWTPayload
+) => Promise<boolean>;
+
+export function validateJWT (
+    fetchSecret: () => Promise<string>, 
+    validatePayload?: ValidatePayload
+): ValidationHandler
+```
+
+The `validatePayload` function gets `method`, `headers`, `params`, `query` as well as the `JWTPayload` as its arguments and is expected to return a `Promise<true|false>`.
+
+A concrete example of a user who has the scope `blog:read` set to true and is therefor allowed to read all blogs (all GET requests to any /blogs/:id) could look like this. In this example, the JWT token is an environment variable.
+
+Before the `validatePayload` function is run, the JWT token is validated and the signature and the secret have been matched successfully.
+
+```js
+const jwtToken = HMACSHA256(
+    /*HEADER*/ {
+        "alg": "HS256",
+        "typ": "JWT"
+    }
+    /*PAYLOAD*/ {
+        "blog:read": true
+    },
+    'secret'
+)
+```
+```ts
+{
+    path: "/blogs/:id", handler: validateJWT(getJWTSecretFromEnv, (method, headers, params, query, payload) => {
+        return (method?.toLowerCase() === 'get' && payload['blog:read'] === true)
+            ? Promise.resolve(true)
+            :  Promise.resolve(false);
+    })
+},
+
+```
+
 ## References
 
 * https://www.thoughtworks.com/en-br/insights/blog/microservices/using-abac-solve-role-explosion

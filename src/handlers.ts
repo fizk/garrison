@@ -4,7 +4,7 @@ import { hrtime } from 'node:process';
 import type { IncomingMessage, ServerResponse } from 'http';
 import type { IncomingHttpHeaders } from 'http';
 
-type Maybe<T> = T | null | undefined;
+export type Maybe<T> = T | null | undefined;
 
 export type ValidationHandler = (
     method: Maybe<string>, 

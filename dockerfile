@@ -20,9 +20,11 @@ FROM node:20-alpine3.17 AS production
 
 ARG arg_ssh_key
 ARG arg_ssh_cert
+ARG arg_jwt_secret
 
 ENV SSH_KEY=$arg_ssh_key
 ENV SSH_CERT=$arg_ssh_cert
+ENV JWT_SECRET=$arg_jwt_secret
 
 WORKDIR /app
 

@@ -1,0 +1,19 @@
+{
+  "name": "guard",
+  "version": "1.0.0",
+  "main": "src/index.js",
+  "keywords": [],
+  "author": "einar valur <fizk78@gmail.com>",
+  "license": "ISC",
+  "description": "reverse proxy server",
+  "scripts": {
+    "build": "./node_modules/.bin/tsc"
+  },
+  "dependencies": {
+    "route-recognizer": "^0.3.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.4.2",
+    "typescript": "^5.1.6"
+  }
+}

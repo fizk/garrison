@@ -5,20 +5,27 @@ import RouteRecognizer from 'route-recognizer';
 import { startServer } from './server'
 import type { Route, Router } from './handlers';
 import { validateJWT, getJWTSecretFromEnv } from './validators/jwt';
+import { validateBasicAuth, getBasicAuthFromEnv } from './validators/basicAuth';
 
 const config: Route[][] = [
     [
         {
             path: "/blog", handler: (method, headers, params, query) => {
-                // console.log({path: '/blog', headers, params, query});
                 return Promise.resolve(true);
             },
         },
+        // {
+        //     path: "/:id", handler: validateJWT(getJWTSecretFromEnv, (method, headers, params, query, payload) => {
+        //         return (method?.toLowerCase() === 'get' && payload['blog:read'] === true)
+        //             ? Promise.resolve(true)
+        //             :  Promise.resolve(false);
+        //     })
+        // },
         {
-            path: "/:id", handler: validateJWT(getJWTSecretFromEnv, (method, headers, params, query, payload) => {
-                return (method?.toLowerCase() === 'get' && payload['blog:read'] === true)
+            path: "/:id", handler: validateBasicAuth(getBasicAuthFromEnv, (method) => {
+                return method?.toLowerCase() === 'get'
                     ? Promise.resolve(true)
-                    :  Promise.resolve(false);
+                    : Promise.resolve(false);
             })
         },
     ],
@@ -38,7 +45,7 @@ const config: Route[][] = [
     ],
 ];
 
-const RESOURCE_SERVER_URL = process.env.RESOURCE_SERVER_URL || 'https://einarvalur.co';
+const RESOURCE_SERVER_URL = process.env.RESOURCE_SERVER_URL || 'http://localhost:8083';
 const PROXY_SERVER_PROTOCOL = process.env.PROXY_SERVER_PROTOCOL || 'https';
 const PROXY_SERVER_PORT = process.env.PROXY_SERVER_PORT || 3030;
 

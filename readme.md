@@ -147,7 +147,13 @@ startServer(
 ## Utilities
 
 ### JWT
-This repo comes with a very simple utility function for validating JWT tokens. 
+This repo comes with a very simple utility function for validating JWT tokens.
+
+This simple utility function is expecting JWT tokens to be passed in the traditional way of http header:
+
+```
+Authorization: Bearer <jwt token>
+```
 
 #### The simple one.
 
@@ -188,6 +194,7 @@ export function validateJWT (
 
 The `validatePayload` function gets `method`, `headers`, `params`, `query` as well as the `JWTPayload` as its arguments and is expected to return a `Promise<true|false>`.
 
+### Example
 A concrete example of a user who has the scope `blog:read` set to true and is therefor allowed to read all blogs (all GET requests to any /blogs/:id) could look like this. In this example, the JWT token is an environment variable.
 
 Before the `validatePayload` function is run, the JWT token is validated and the signature and the secret have been matched successfully.
@@ -214,7 +221,72 @@ const jwtToken = HMACSHA256(
 },
 
 ```
+### HTTP BasicAuth
+This repo comes with a HTTP BasicAuth validation.
+
+It's expecting the authentication to be passed as HTTP header
+
+```
+Authorization: Basic <base64(username:password)>
+```
+#### The simple one.
+The simple version looks like this
+```ts
+export function validateBasicAuth (fetchCredentials: (username: string, password: string) => Promise<[string, string]>): ValidationHandler
+```
+
+The `fetchCredentials` function is expected to return a tuple in a `Promise` with **username** being the first value and the **password** being the second. 
+
+When this function is called, the payload provided by the client is parsed and the username and password as they are provided by the client will be passed into it. An implementation of this function could go to a LDAP server or any other authentication server, using the username/password provided to look up the user.
+
+If the user is not found or the password is incorrect, an implementation of this function should throw an error.
+
+The docker image has support for passing in the environment variables `BASIC_AUTH_USERNAME` and `BASIC_AUTH_PASSWORD`. The repo provides the function `getBasicAuthFromEnv` which will pick up these values and return in a tuple.
+
+It's not a good idea to pass these values in when running the image, so the Dockerfile has support for passing them in at build time by using.
+
+```sh
+docker build -t proxy-server --build-arg arg_ssh_key="$(cat $(pwd)/pem/key.pem)" --build-arg arg_ssh_cert="$(cat $(pwd)/pem/cert.pem)" --build-arg arg_basic_auth_username=<username> --build-arg arg_basic_auth_password=<password>.
+```
+
+The `getBasicAuthFromEnv` is more for development purposes as it is expecting there only to be one user available.
+
+
+#### The complicated one.
+If you want to do any additional checks on a BasicAuth request, you can pass in a second argument to `validateBasicAuth`, in which case the signature would look like this
+
+```ts
+export type ValidateUser = (
+    method: Maybe<string>, 
+    headers: IncomingHttpHeaders, 
+    params: Maybe<Record<string, string>>, 
+    query: Maybe<Record<string, string> | undefined>,
+    username: string
+) => Promise<boolean>;
+
+export function validateBasicAuth (fetchCredentials: () => Promise<[string, string]>, validateUser?: ValidateUser): ValidationHandler
+``` 
+When provided, in addition to validating the username/password of the client, it will run the additional validation function and return the results.
+
+### Example
+Given that An example where any logged-in user has read access (make a GET request) to any blog, could look something like this:
+
+```ts
+{
+    path: "/blogs/:id", handler: validateBasicAuth(getBasicAuthFromEnv, (method) => {
+        return method?.toLowerCase() === 'get'
+            ? Promise.resolve(true)
+            : Promise.resolve(false);
+    })
+}
+```
 
 ## References
 
 * https://www.thoughtworks.com/en-br/insights/blog/microservices/using-abac-solve-role-explosion
+
+
+
+
+
+

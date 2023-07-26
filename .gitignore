@@ -217,5 +217,7 @@ $RECYCLE.BIN/
 
 # End of https://www.toptal.com/developers/gitignore/api/node,visualstudiocode,osx,windows
 
+echoserver.ts
+
 pem/*
 !pem/.gitkeep

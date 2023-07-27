@@ -3,9 +3,10 @@ import fs from 'fs';
 import path from 'path';
 import RouteRecognizer from 'route-recognizer';
 import { startServer } from './server'
-import type { Route, Router } from './handlers';
+import type { Maybe, Route, Router } from './handlers';
 import { validateJWT, getJWTSecretFromEnv } from './validators/jwt';
 import { validateBasicAuth, getBasicAuthFromEnv } from './validators/basicAuth';
+import { validateAuthHeader } from './validators/authHeader';
 
 const config: Route[][] = [
     [
@@ -21,11 +22,18 @@ const config: Route[][] = [
         //             :  Promise.resolve(false);
         //     })
         // },
+        // {
+        //     path: "/:id", handler: validateBasicAuth(getBasicAuthFromEnv, (method) => {
+        //         return method?.toLowerCase() === 'get'
+        //             ? Promise.resolve(true)
+        //             : Promise.resolve(false);
+        //     })
+        // },
         {
-            path: "/:id", handler: validateBasicAuth(getBasicAuthFromEnv, (method) => {
-                return method?.toLowerCase() === 'get'
-                    ? Promise.resolve(true)
-                    : Promise.resolve(false);
+            path: "/:id", handler: validateAuthHeader({
+                jwt: [getJWTSecretFromEnv, (method) => Promise.resolve(method === 'PUT')],
+                basic: [getBasicAuthFromEnv, (method: Maybe<string>) => Promise.resolve(method === 'PUT')],
+                fallback: (method) => Promise.resolve(method === 'GET')
             })
         },
     ],

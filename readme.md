@@ -281,6 +281,36 @@ Given that An example where any logged-in user has read access (make a GET reque
 }
 ```
 
+## HTTP Authorization Header
+This repo also provides a simple function that combines both JWT and BasicAuth into one. This is useful if one route can accept either JWTs or BasicAuth.
+
+Under the hood it will just check it the `Authorization` header starts with `Basic` or `Bearer` and pick a path accordingly.
+
+You can also provide a `fallback` function that will be run if neither header is found.
+
+In this example, an authenticated user (either JWT or BasicAuth) can only issue a **PUT** request, other user can only issue a **GET** request.
+
+```ts
+{
+    path: "/:id", handler: validateAuthHeader({
+        jwt: [getJWTSecretFromEnv, (method) => Promise.resolve(method === 'PUT')],
+        basic: [getBasicAuthFromEnv, (method) => Promise.resolve(method === 'PUT')],
+        fallback: (method) => Promise.resolve(method === 'GET')
+    })
+}
+```
+
+In this example, authenticated user can issue all methods, while non-logged-in users can only issue a **GET** request.
+```ts
+{
+    path: "/:id", handler: validateAuthHeader({
+        jwt: [getJWTSecretFromEnv],
+        basic: [getBasicAuthFromEnv],
+        fallback: (method) => Promise.resolve(method === 'GET')
+    })
+}
+```
+
 ## References
 
 * https://www.thoughtworks.com/en-br/insights/blog/microservices/using-abac-solve-role-explosion

@@ -260,6 +260,13 @@ docker build -t proxy-server --build-arg arg_ssh_key="$(cat $(pwd)/pem/key.pem)"
 
 The `getBasicAuthFromEnv` is more for development purposes as it is expecting there only to be one user available.
 
+## Test
+
+```sh
+docker build --target build -t testme .
+docker run --rm testme npm test
+```
+
 ## References
 
 * https://www.thoughtworks.com/en-br/insights/blog/microservices/using-abac-solve-role-explosion

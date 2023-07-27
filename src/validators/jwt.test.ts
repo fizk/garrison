@@ -1,6 +1,8 @@
 import {describe, expect, test} from '@jest/globals';
 import { validateJWT } from './jwt'
 import { ValidationHandler } from '../handlers';
+import { SignJWT } from 'jose';
+import { createSecretKey } from 'crypto';
 import type { IncomingHttpHeaders } from 'http';
 
 describe('validateJWT', () => {
@@ -52,5 +54,34 @@ describe('validateJWT', () => {
         const handler: ValidationHandler = await validateJWT(() => Promise.resolve(secret));
         const headers: IncomingHttpHeaders  = {};
         expect(handler(['GET', headers, {}, {}])).rejects.not.toBeNull();
+    });
+
+    test('exp has expired', async () => {
+        const secret = '123';
+        const secretKey = createSecretKey(secret, 'utf-8');
+        const token = await new SignJWT({ id: '12345' })
+            .setProtectedHeader({ alg: 'HS256' })
+            .setIssuedAt()
+            .setExpirationTime(Math.trunc(Date.now() / 1000) - 100)
+            .sign(secretKey);
+        
+        const handler: ValidationHandler = await validateJWT(() => Promise.resolve(secret));
+        const headers: IncomingHttpHeaders  = {authorization: `Bearer ${token}`};
+        expect(handler(['GET', headers, {}, {}])).rejects.not.toBeNull();
+    });
+
+    test('exp is still valid', async () => {
+        const secret = '123';
+        const secretKey = createSecretKey(secret, 'utf-8');
+        const token = await new SignJWT({ id: '12345' })
+            .setProtectedHeader({ alg: 'HS256' })
+            .setIssuedAt()
+            .setExpirationTime(Math.trunc(Date.now() / 1000) + 100)
+            .sign(secretKey);
+        
+        const handler: ValidationHandler = await validateJWT(() => Promise.resolve(secret));
+        const headers: IncomingHttpHeaders  = {authorization: `Bearer ${token}`};
+        const response = await handler(['GET', headers, {}, {}]);
+        expect(response).not.toBeNull();
     });
 });

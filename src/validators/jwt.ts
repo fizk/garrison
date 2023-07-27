@@ -1,7 +1,7 @@
 import { jwtVerify } from 'jose';
 import type { ValidationHandler } from '../handlers';
 
-export function validateJWT (fetchSecret: () => Promise<string>): ValidationHandler  {    
+export function validateJWT (fetchSecret: () => Promise<string>): ValidationHandler  {
     return async ([method, headers, params, query, args]) => {
         if (!headers.authorization) throw new Error('No Authorization header provided');
         if (headers.authorization.startsWith("Bearer ")) {

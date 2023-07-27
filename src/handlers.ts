@@ -6,12 +6,15 @@ import type { IncomingHttpHeaders } from 'http';
 
 export type Maybe<T> = T | null | undefined;
 
-export type ValidationHandler = (
+export type RequestValues = [
     method: Maybe<string>, 
-    headers: IncomingHttpHeaders, 
+    headers: IncomingHttpHeaders,
     params: Maybe<Record<string, string>>, 
-    query: Maybe<Record<string, string> | undefined>
-) => Promise<boolean>;
+    query: Maybe<Record<string, string> | undefined>,
+    args?: any
+];
+
+export type ValidationHandler = (requestValues: RequestValues) => Promise<RequestValues>;
 
 export interface Router {
     recognize: (path: string) => Results
@@ -19,7 +22,7 @@ export interface Router {
 
 export interface Route {
     path: string
-    handler: ValidationHandler
+    handler: ValidationHandler[]
 }
 
 export interface Results extends ArrayLike<Maybe<Result>> {
@@ -28,8 +31,12 @@ export interface Results extends ArrayLike<Maybe<Result>> {
 
 export interface Result {
     params: Record<string, string>
-    handler: ValidationHandler
+    handler: ValidationHandler[]
 }
+
+const compose = (...functions: any[]) => (input: any) => {
+    return functions.reduceRight((chain, func) => chain.then(func), Promise.resolve(input))
+};
 
 export function generateProxyServer(
     protocol: string, 
@@ -60,32 +67,24 @@ export  const proxyServerHandler = (router: Router, proxyAction: (request: Incom
         return;
     }
 
-    const verifyResult: boolean[] = await Promise.all(
-        Array.from(routerResult).map(result => {
-            if (!result?.handler) return Promise.resolve(false);
-            return result.handler(
-                request.method,
-                request.headers, 
-                result.params, 
-                routerResult.queryParams
-            );
+    const handlers = Array.from(routerResult).reduce<ValidationHandler[]>((previous, current) => {
+        if (!current?.handler) return previous;
+        return [...previous, ...current?.handler]
+    }, []);
+    const params = Array.from(routerResult).reduce((previous, current) => ({...previous, ...current?.params}), {})
+    compose(...handlers as Array<any>)([request.method, request.headers, params, routerResult.queryParams])
+        .then(() => {
+            return proxyAction(request, response);
         })
-    );
-
-    const isValid = verifyResult.every(verify => verify === true);
-
-    if (!isValid) {
-        response.statusCode = 401;
-        response.end();
-        console.log(`${new Date().toJSON()} - ${request.method} ${request.url?.toString()} 401 - ${hrtime.bigint() - start}ns Access denied`);
-        return;
-    }
-    
-    proxyAction(request, response).then(() => {
-        console.log(`${new Date().toJSON()} - ${request.method} ${request.url?.toString()} ${response.statusCode} - ${hrtime.bigint() - start}ns`);
-    }).catch(error => {
-        console.log(`[${new Date().toJSON()}] ${request.method} ${request.url?.toString()} ${response.statusCode} - ${hrtime.bigint() - start}ns ${error?.message}`);
-    });
+        .then(() => {
+            console.log(`${new Date().toJSON()} - ${request.method} ${request.url?.toString()} ${response.statusCode} - ${hrtime.bigint() - start}ns`);
+        })
+        .catch((error: any) => {
+            response.statusCode = 401;
+            response.end();
+            console.log(`${new Date().toJSON()} - ${request.method} ${request.url?.toString()} 401 - ${hrtime.bigint() - start}ns Access denied | ${error.message}`);
+            return;
+        });
 }
 
 export const proxyAction = (sslKey: string, sslCert: string, resourceServeryURL: URL) => (request: IncomingMessage, response: ServerResponse): Promise<void> => {

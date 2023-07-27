@@ -3,52 +3,61 @@ import fs from 'fs';
 import path from 'path';
 import RouteRecognizer from 'route-recognizer';
 import { startServer } from './server'
-import type { Maybe, Route, Router } from './handlers';
 import { validateJWT, getJWTSecretFromEnv } from './validators/jwt';
 import { validateBasicAuth, getBasicAuthFromEnv } from './validators/basicAuth';
-import { validateAuthHeader } from './validators/authHeader';
+import type { Route, Router, ValidationHandler } from './handlers';
+
+const compareGetRequests: ValidationHandler = ([method, headers, params, query, args]) => {
+    if (method?.toLowerCase() === 'get') return Promise.resolve([method, headers, params, query, args]);
+    throw new Error(`Does not have access to ${method}`);
+}
+
+const compareReadBlogScope: ValidationHandler = ([method, headers, params, query, args]) => {
+    if(args['blog:read'] === true) return Promise.resolve([method, headers, params, query, args]);
+    throw new Error('Does not have "blog:read" rights');
+}
+
+const fetchRemoteScope: ValidationHandler = ([method, headers, params, query, args]) => {
+    // calls to a remote server by username and gets back user-scope
+    // const scope = getScopeByUser(args[0])
+    const scope = {'blog:read': true}; // just mocking it for demonstration purposes
+    if (!scope) throw new Error(`No scopes provided for user ${args[0]}`);
+    return Promise.resolve([method, headers, params, query, scope]);
+}
+
+const comparePostIDs = (ids: any[]): ValidationHandler => ([method, headers, params, query, args]) => {
+    if (ids.includes(params?.id)) return Promise.resolve([method, headers, params, query, args]);
+    throw new Error(`User does not have access to post "${params?.id}"`);
+}
 
 const config: Route[][] = [
     [
         {
-            path: "/blog", handler: (method, headers, params, query) => {
-                return Promise.resolve(true);
-            },
+            // Example of JWT authentication
+            path: "/blogs/:id", handler: [
+                comparePostIDs(['1']), 
+                compareReadBlogScope, 
+                compareGetRequests, 
+                validateJWT(getJWTSecretFromEnv)
+            ],
         },
-        // {
-        //     path: "/:id", handler: validateJWT(getJWTSecretFromEnv, (method, headers, params, query, payload) => {
-        //         return (method?.toLowerCase() === 'get' && payload['blog:read'] === true)
-        //             ? Promise.resolve(true)
-        //             :  Promise.resolve(false);
-        //     })
-        // },
-        // {
-        //     path: "/:id", handler: validateBasicAuth(getBasicAuthFromEnv, (method) => {
-        //         return method?.toLowerCase() === 'get'
-        //             ? Promise.resolve(true)
-        //             : Promise.resolve(false);
-        //     })
-        // },
         {
-            path: "/:id", handler: validateAuthHeader({
-                jwt: [getJWTSecretFromEnv, (method) => Promise.resolve(method === 'PUT')],
-                basic: [getBasicAuthFromEnv, (method: Maybe<string>) => Promise.resolve(method === 'PUT')],
-                fallback: (method) => Promise.resolve(method === 'GET')
-            })
+            // Example of HTTP BasicAuth authentication
+            path: "/comments/:id", handler: [
+                comparePostIDs(['1']), 
+                compareReadBlogScope, 
+                fetchRemoteScope, 
+                compareGetRequests, 
+                validateBasicAuth(getBasicAuthFromEnv)
+            ],
         },
-    ],
+    ]
+    ,
     [
         {
-            path: '/cv', handler: (method, headers, params, query) => {
-                return Promise.resolve(true);
-            }
-        }
-    ],
-    [
-        {
-            path: '*', handler: (method, headers, params, query) => {
-                return Promise.resolve(true);
-            }
+            path: '*', handler: [(args) => {
+                return Promise.resolve(args);
+            }]
         }
     ],
 ];

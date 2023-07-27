@@ -1,7 +1,6 @@
 # Guard
 
-A Proxy server than accepts a list of validation rules and will either: pass a request through if validated successfully or block and return a `HTTP status code 401`.
-
+A Proxy server than accepts a list of validation rules and will either: pass a request through if is validated successfully or block and return a `HTTP status code 401`.
 
 ```
 Public VPN             Private VPN
@@ -25,41 +24,62 @@ Public VPN             Private VPN
 The rules are attached to a URL route. This server uses [route-recognizer](https://github.com/tildeio/route-recognizer), read more about the how to define routes [here](https://github.com/tildeio/route-recognizer#usage).
 
 ## Handlers
-Handlers are any JavaScript function that subscribe to this signature
+
+Handlers and Paths are the backbone of this ReverseProxy Server. Paths are attached to handlers which will validate the accessibility of each URL. Handlers are chained together to test and validate accessibility.
+
+Handlers are JavaScript function with the following signature
+
 ```ts
 import type { IncomingHttpHeaders } from 'http';
 
-type Maybe<T> = T | null | undefined;
+export type Maybe<T> = T | null | undefined;
 
-export type ValidationHandler = (
+export type RequestValues = [
     method: Maybe<string>, 
-    headers: IncomingHttpHeaders, 
+    headers: IncomingHttpHeaders,
     params: Maybe<Record<string, string>>, 
-    query: Maybe<Record<string, string> | undefined>
-) => Promise<boolean>;
+    query: Maybe<Record<string, string> | undefined>,
+    args?: any
+];
+
+export type ValidationHandler = (requestValues: RequestValues) => Promise<RequestValues>;
 ```
 
-## Defining Handlers and Paths
+As you can see, the handler will return the arguments that they receive, which allows you to chain together multiple handlers. Each handler can therefor test a subset of the overall validation criteria. Validation rules can be composed and reused.
+
+A very simple Handler that only allow **GET** request to go through would look like this
+```ts
+const compareGetRequests: ValidationHandler = ([method, headers, params, query, args]) => {
+    if (method?.toLowerCase() === 'get') return Promise.resolve([method, headers, params, query, args]);
+    throw new Error(`Does not have access to ${method}`);
+}
+```
+If the method is **GET**, it will be resolved, if not, an exception it thrown.
+
+If we want to, for example, restrict requests so that only Mozilla based browsers can have access, we can create a new Handler
+```ts
+const compareAcceptLanguage: ValidationHandler = ([method, headers, params, query, args]) => {
+    if (header['accept-language'].includes('Mozilla')) return Promise.resolve([method, headers, params, query, args]);
+    throw new Error(`Not a Mozilla browser`);
+}
+```
+
+
+### Defining Handlers and Paths
+If we now want to apply both rules we do it like this:
 ```ts
 import type { Route } from './handlers';
 
 const config: Route[][] = [
     [
         {
-            path: "/blog", handler: (method, headers, params, query) => {
-                // Validate request
-                return Promise.resolve(true);
-            },
-        },
-        {
-            path: "/:id", handler: (method, headers, params, query) => {
-                // Validate request
-                return Promise.resolve(true);
-            }
+            path: "/blogs/:id", handler: [compareGetRequests, compareAcceptLanguage]
         },
     ],
 ];
 ```
+
+Be advised that the rules are read from right to left. In the example above, the AcceptLanguage is checked first and the the request method.
 
 ## Description
 This ReverseProxy server is somewhat based off of the Attribute-Based Access Control (ABAC) idea. The server itself would be the PEP (Policy Enforcement Point) and the JavaScript rules would be the PDP (Policy Decision Point).
@@ -122,9 +142,7 @@ const SSH_CERT = process.env.SSH_CERT;
 const config: Route[][] = [
     [
         {
-            path: "*", handler: (method, headers, params, query) => {
-                return Promise.resolve(true);
-            },
+            path: "*", handler: [(arguments) => Promise.resolve(arguments)],
         },
     ],
 ];
@@ -155,9 +173,7 @@ This simple utility function is expecting JWT tokens to be passed in the traditi
 Authorization: Bearer <jwt token>
 ```
 
-#### The simple one.
-
-The first version of this utility function looks like this:
+The signature looks like this:
 ```ts
 export function validateJWT (fetchSecret: () => Promise<string>): ValidationHandler
 ```
@@ -174,30 +190,9 @@ It's not a good idea to pass a secret variable to a Docker image when run so the
 docker build -t proxy-server --build-arg arg_ssh_key="$(cat $(pwd)/pem/key.pem)" --build-arg arg_ssh_cert="$(cat $(pwd)/pem/cert.pem)" --build-arg arg_jwt_secret=123 .
 ```
 
-#### The complicated one.
-If you want to validate the payload inside the JWT token, you can pass in a second argument to the `validateJWT` function. Then the signature looks like this:
-
-```ts
-export type ValidatePayload = (
-    method: Maybe<string>, 
-    headers: IncomingHttpHeaders, 
-    params: Maybe<Record<string, string>>, 
-    query: Maybe<Record<string, string> | undefined>,
-    payload: JWTPayload
-) => Promise<boolean>;
-
-export function validateJWT (
-    fetchSecret: () => Promise<string>, 
-    validatePayload?: ValidatePayload
-): ValidationHandler
-```
-
-The `validatePayload` function gets `method`, `headers`, `params`, `query` as well as the `JWTPayload` as its arguments and is expected to return a `Promise<true|false>`.
-
 ### Example
 A concrete example of a user who has the scope `blog:read` set to true and is therefor allowed to read all blogs (all GET requests to any /blogs/:id) could look like this. In this example, the JWT token is an environment variable.
 
-Before the `validatePayload` function is run, the JWT token is validated and the signature and the secret have been matched successfully.
 
 ```js
 const jwtToken = HMACSHA256(
@@ -212,15 +207,31 @@ const jwtToken = HMACSHA256(
 )
 ```
 ```ts
-{
-    path: "/blogs/:id", handler: validateJWT(getJWTSecretFromEnv, (method, headers, params, query, payload) => {
-        return (method?.toLowerCase() === 'get' && payload['blog:read'] === true)
-            ? Promise.resolve(true)
-            :  Promise.resolve(false);
-    })
-},
-
+const compareReadBlogScope: ValidationHandler = ([method, headers, params, query, args]) => {
+    if(args['blog:read'] === true) return Promise.resolve([method, headers, params, query, args]);
+    throw new Error('Does not have "blog:read" rights');
+}
+const compareGetRequests: ValidationHandler = ([method, headers, params, query, args]) => {
+    if (method?.toLowerCase() === 'get') return Promise.resolve([method, headers, params, query, args]);
+    throw new Error(`Does not have access to ${method}`);
+}
+const config: Route[][] = [
+    [
+        {
+            path: "/blogs/:id", handler: [compareGetRequests, compareReadBlogScope, validateJWT(getJWTSecretFromEnv)],
+        },
+    ]
+]
 ```
+#### How it works
+First `validateJWT` is called. It is closure function that takes in the `getJWTSecretFromEnv` which will read the JWT secret from the environment. It then returns a `ValidationHandler` function. When the request is made, the `validateJWT`'s inner function is run which will evaluate the JWT token and if it's valid, will pass control over to the next function. It will also pass the JWT's payload to the next function in the `args?: any` argument.
+
+Next the `compareReadBlogScope` function will run, which checks the JWT's payload for the `'blog:read'` value.
+
+Lastly the `compareGetRequests` function will run, which will check the HTTP method, if it is **GET** the whole validation chain has succeeded and the ProxyServer will pass the request onto the ResourceServer... if not it will stop and issue a **401** response.
+
+
+
 ### HTTP BasicAuth
 This repo comes with a HTTP BasicAuth validation.
 
@@ -229,15 +240,13 @@ It's expecting the authentication to be passed as HTTP header
 ```
 Authorization: Basic <base64(username:password)>
 ```
-#### The simple one.
-The simple version looks like this
+
+The signature of the function looks like this
 ```ts
-export function validateBasicAuth (fetchCredentials: (username: string, password: string) => Promise<[string, string]>): ValidationHandler
+export const validateBasicAuth = (validateCredentials: (username: string, password: string) => Promise<boolean>): ValidationHandler => async ([method, headers, params, query])
 ```
 
-The `fetchCredentials` function is expected to return a tuple in a `Promise` with **username** being the first value and the **password** being the second. 
-
-When this function is called, the payload provided by the client is parsed and the username and password as they are provided by the client will be passed into it. An implementation of this function could go to a LDAP server or any other authentication server, using the username/password provided to look up the user.
+The `validateCredentials` gets passed the username/password as provided in the HTTP header. The function is expected to return a `Promise<boolean>` to indicate if the username/password match something on file. An implementation of this function could go to a LDAP server or any other authentication server, using the username/password provided to look up the user.
 
 If the user is not found or the password is incorrect, an implementation of this function should throw an error.
 
@@ -250,66 +259,6 @@ docker build -t proxy-server --build-arg arg_ssh_key="$(cat $(pwd)/pem/key.pem)"
 ```
 
 The `getBasicAuthFromEnv` is more for development purposes as it is expecting there only to be one user available.
-
-
-#### The complicated one.
-If you want to do any additional checks on a BasicAuth request, you can pass in a second argument to `validateBasicAuth`, in which case the signature would look like this
-
-```ts
-export type ValidateUser = (
-    method: Maybe<string>, 
-    headers: IncomingHttpHeaders, 
-    params: Maybe<Record<string, string>>, 
-    query: Maybe<Record<string, string> | undefined>,
-    username: string
-) => Promise<boolean>;
-
-export function validateBasicAuth (fetchCredentials: () => Promise<[string, string]>, validateUser?: ValidateUser): ValidationHandler
-``` 
-When provided, in addition to validating the username/password of the client, it will run the additional validation function and return the results.
-
-### Example
-Given that An example where any logged-in user has read access (make a GET request) to any blog, could look something like this:
-
-```ts
-{
-    path: "/blogs/:id", handler: validateBasicAuth(getBasicAuthFromEnv, (method) => {
-        return method?.toLowerCase() === 'get'
-            ? Promise.resolve(true)
-            : Promise.resolve(false);
-    })
-}
-```
-
-## HTTP Authorization Header
-This repo also provides a simple function that combines both JWT and BasicAuth into one. This is useful if one route can accept either JWTs or BasicAuth.
-
-Under the hood it will just check it the `Authorization` header starts with `Basic` or `Bearer` and pick a path accordingly.
-
-You can also provide a `fallback` function that will be run if neither header is found.
-
-In this example, an authenticated user (either JWT or BasicAuth) can only issue a **PUT** request, other user can only issue a **GET** request.
-
-```ts
-{
-    path: "/:id", handler: validateAuthHeader({
-        jwt: [getJWTSecretFromEnv, (method) => Promise.resolve(method === 'PUT')],
-        basic: [getBasicAuthFromEnv, (method) => Promise.resolve(method === 'PUT')],
-        fallback: (method) => Promise.resolve(method === 'GET')
-    })
-}
-```
-
-In this example, authenticated user can issue all methods, while non-logged-in users can only issue a **GET** request.
-```ts
-{
-    path: "/:id", handler: validateAuthHeader({
-        jwt: [getJWTSecretFromEnv],
-        basic: [getBasicAuthFromEnv],
-        fallback: (method) => Promise.resolve(method === 'GET')
-    })
-}
-```
 
 ## References
 

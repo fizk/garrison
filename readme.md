@@ -1,6 +1,12 @@
-# Guard
+# Garrison
 
-A Proxy server than accepts a list of validation rules and will either: pass a request through if is validated successfully or block and return a `HTTP status code 401`.
+**garrison**
+_/ˈɡarɪs(ə)n/_
+noun
+> a group of troops stationed in a fortress or town to defend it.
+"the entire garrison was mustered on the parade ground"
+
+A Proxy server than accepts a list of validation rules and will either: pass a request through, if is validated successfully or block and return a `HTTP status code 401`.
 
 ```
 Public VPN             Private VPN
@@ -21,45 +27,39 @@ Public VPN             Private VPN
 ```
 
 ## Rules.
-The rules are attached to a URL route. This server uses [route-recognizer](https://github.com/tildeio/route-recognizer), read more about the how to define routes [here](https://github.com/tildeio/route-recognizer#usage).
+Rules are defined with a `pattern` and `handlers`. Patterns are defined using the [URLPatter](https://developer.mozilla.org/en-US/docs/Web/API/URLPattern) interface.
+
 
 ## Handlers
-
-Handlers and Paths are the backbone of this ReverseProxy Server. Paths are attached to handlers which will validate the accessibility of each URL. Handlers are chained together to test and validate accessibility.
-
-Handlers are JavaScript function with the following signature
+Handlers are an array of function that either Resolve or throw Exceptions.
 
 ```ts
-import type { IncomingHttpHeaders } from 'http';
-
 export type Maybe<T> = T | null | undefined;
 
 export type RequestValues = [
-    method: Maybe<string>, 
-    headers: IncomingHttpHeaders,
-    params: Maybe<Record<string, string>>, 
-    query: Maybe<Record<string, string> | undefined>,
-    args?: any
+    request: Request,
+    params: Maybe<Record<string, Maybe<string>>>,
+    args?: Maybe<Record<string, string> | string[]>
 ];
 
 export type ValidationHandler = (requestValues: RequestValues) => Promise<RequestValues>;
 ```
 
-As you can see, the handler will return the arguments that they receive, which allows you to chain together multiple handlers. Each handler can therefor test a subset of the overall validation criteria. Validation rules can be composed and reused.
+Handler will return the arguments that they receive, which allows you to chain together multiple handlers. Each handler can therefor test a subset of the overall validation criteria. Validation rules can be composed and reused.
 
 A very simple Handler that only allow **GET** request to go through would look like this
 ```ts
-const compareGetRequests: ValidationHandler = ([method, headers, params, query, args]) => {
-    if (method?.toLowerCase() === 'get') return Promise.resolve([method, headers, params, query, args]);
+const compareGetRequests: ValidationHandler = ([request, params, args]) => {
+    if (request.method?.toLowerCase() === 'get') return Promise.resolve([request, params, args]);
     throw new Error(`Does not have access to ${method}`);
 }
 ```
 If the method is **GET**, it will be resolved, if not, an exception it thrown.
 
-If we want to, for example, restrict requests so that only Mozilla based browsers can have access, we can create a new Handler
+If we want, for example, to restrict requests so that only Mozilla based browsers can have access, we can create a new Handler
 ```ts
-const compareAcceptLanguage: ValidationHandler = ([method, headers, params, query, args]) => {
-    if (header['accept-language'].includes('Mozilla')) return Promise.resolve([method, headers, params, query, args]);
+const compareAcceptUserAgent: ValidationHandler = ([request, params, args]) => {
+    if (request.header.get('User-Agent').includes('Mozilla')) return Promise.resolve([request, params, args]);
     throw new Error(`Not a Mozilla browser`);
 }
 ```
@@ -71,42 +71,45 @@ If we now want to apply both rules we do it like this:
 import type { Route } from './handlers';
 
 const config: Route[][] = [
-    [
-        {
-            path: "/blogs/:id", handler: [compareGetRequests, compareAcceptLanguage]
-        },
-    ],
+    {
+        pattern: new URLPattern({
+            hostname: '*',
+            pathname: '/',
+            search: '*'
+        }),
+        handlers: [compareGetRequests, compareAcceptUserAgent]
+    },
 ];
 ```
 
-Be advised that the rules are read from right to left. In the example above, the AcceptLanguage is checked first and the the request method.
+Be advised that the rules are read from right to left. In the example above, the `compareAcceptUserAgent` is checked first and then the request method.
 
 ## Description
-This ReverseProxy server is somewhat based off of the Attribute-Based Access Control (ABAC) idea. The server itself would be the PEP (Policy Enforcement Point) and the JavaScript rules would be the PDP (Policy Decision Point).
+This ReverseProxy server is somewhat based off of the Attribute-Based Access Control (ABAC) idea. The server itself would be the PEP (Policy Enforcement Point) and the JavaScript (Route) rules would be the PDP (Policy Decision Point).
 
 The JavaScript rules would then call out to the PIP (Policy Information Point) and the PRP (Policy Retrieval Point) as they needed.
 
 ![](https://www.nextlabs.com/wp-content/uploads/XACML-PAGE-DIAGRAM-2.png)
 
-## HTTP / HTTPS
-This server can run either as http or https, pass in a `protocol` (`http` or `https`). With https you also have to pass in a SSH key and certificate 
+## HTTPS
+This server can only run as https.
 
 ### create ssl
 
 ```bash
-cd pem 
+cd pem
 openssl genrsa -out key.pem
 openssl req -new -key key.pem -out csr.pem
 openssl x509 -req -days 365 -in csr.pem -signkey key.pem -out cert.pem
 rm csr.pem
 ```
 
-The proxy also needs a full URL to the server for example `https://example.com`, the proxy will figure out which protocol to use and if it is https, it will use the same SSH key and certificate to authenticate with the server.
+The proxy also needs a full URL to the server it is protecting, for example `https://example.com`, the proxy will figure out which protocol to use.
 
 ## Building and running the proxy with Docker
 Here is an example of building the Proxy using the Dockerfile.
 
-SSH key and certificate are being read from files and passed to the build-arg command. They will then be turned into environment varaibles available to the proxy when the proxy is run.
+SSH key and certificate are being read from files and passed to the build-arg command. They will then be turned into environment variables available to the proxy when the proxy is run.
 
 ```sh
 docker build -t proxy-server --build-arg arg_ssh_key="$(cat $(pwd)/pem/key.pem)" --build-arg arg_ssh_cert="$(cat $(pwd)/pem/cert.pem)" .
@@ -116,51 +119,9 @@ The SSH key and cert are now baked into the container.
 
 To run the container, map the port and pass in any additional env variables required.
 ```sh
-docker run -e RESOURCE_SERVER_URL=https://example.com -e PROXY_SERVER_PROTOCOL=https -e PROXY_SERVER_PORT=3000 -p 8080:3000 proxy-server
+docker run -e RESOURCE_SERVER_URL=https://example.com -e PORT=3000 -p 8080:3000 proxy-server
 ```
 
-## Example
-This is an example of how the `index.ts` file could look like. The only thing to do is to write your own authorization rules and handlers
-
-```ts
-import fs from 'fs';
-import path from 'path';
-import RouteRecognizer from 'route-recognizer';
-import { startServer } from './server'
-import type { Route, Router } from './handlers';
-
-const RESOURCE_SERVER_URL = process.env.RESOURCE_SERVER_URL;
-const PROXY_SERVER_PROTOCOL = process.env.PROXY_SERVER_PROTOCOL;
-const PROXY_SERVER_PORT = process.env.PROXY_SERVER_PORT;
-const SSH_KEY = process.env.SSH_KEY;
-const SSH_CERT = process.env.SSH_CERT;
-
-// WRITE YOUR OWN RULES
-//  this would be the only part you have to write
-//  you could even move this to a separate file so it's
-//  easier to test.
-const config: Route[][] = [
-    [
-        {
-            path: "*", handler: [(arguments) => Promise.resolve(arguments)],
-        },
-    ],
-];
-// --end of: WRITE YOUR OWN RULES
-
-const router = new RouteRecognizer();
-config.forEach(path => router.add(path));
-
-startServer(
-    router as Router, 
-    PROXY_SERVER_PROTOCOL, 
-    Number(PROXY_SERVER_PORT), 
-    RESOURCE_SERVER_URL, 
-    SSH_KEY, 
-    SSH_CERT
-);
-
-```
 
 ## Utilities
 
@@ -179,15 +140,10 @@ export function validateJWT (fetchSecret: () => Promise<string>): ValidationHand
 ```
 It is only concerned about the token being valid, not what is inside the token.
 
-Because JWT's verification process requires a **secret**, this function takes in the `fetchSecret: () => Promise<string>` function that should return the **secret** that was used to sign the JWT token. This could be a http request to an _auth server_ or what ever is required.
-
-If the **secret** is already an environment variable, this repo comes with a `getJWTSecretFromEnv` function that simply returns the `JWT_SECRET` environment variable.
-
-It's not a good idea to pass a secret variable to a Docker image when run so the Dockerfile has support for passing the **secret** in at build time by using the `--build-arg arg_jwt_secret=<secret>` argument.
-
+It uses **RS256** so the `fetchSecret` needs to return a valid RS256 key.
 
 ```sh
-docker build -t proxy-server --build-arg arg_ssh_key="$(cat $(pwd)/pem/key.pem)" --build-arg arg_ssh_cert="$(cat $(pwd)/pem/cert.pem)" --build-arg arg_jwt_secret=123 .
+docker build -t proxy-server --build-arg arg_ssh_key="$(cat $(pwd)/pem/key.pem)" --build-arg arg_ssh_cert="$(cat $(pwd)/pem/cert.pem)" --build-arg arg_jwt_key=123 .
 ```
 
 ### Example
@@ -210,21 +166,28 @@ const jwtToken = HMACSHA256(
 const compareReadBlogScope: ValidationHandler = ([method, headers, params, query, args]) => {
     if(args['blog:read'] === true) return Promise.resolve([method, headers, params, query, args]);
     throw new Error('Does not have "blog:read" rights');
-}
+};
+
 const compareGetRequests: ValidationHandler = ([method, headers, params, query, args]) => {
     if (method?.toLowerCase() === 'get') return Promise.resolve([method, headers, params, query, args]);
     throw new Error(`Does not have access to ${method}`);
-}
+};
+
 const config: Route[][] = [
     [
         {
-            path: "/blogs/:id", handler: [compareGetRequests, compareReadBlogScope, validateJWT(getJWTSecretFromEnv)],
+            pattern: new URLPattern({
+                hostname: '*',
+                pathname: '/blogs/:id',
+                search: '*'
+            }),
+            handler: [compareGetRequests, compareReadBlogScope, validateJWT(getKeyFromEnv)],
         },
     ]
 ]
 ```
 #### How it works
-First `validateJWT` is called. It is closure function that takes in the `getJWTSecretFromEnv` which will read the JWT secret from the environment. It then returns a `ValidationHandler` function. When the request is made, the `validateJWT`'s inner function is run which will evaluate the JWT token and if it's valid, will pass control over to the next function. It will also pass the JWT's payload to the next function in the `args?: any` argument.
+First `validateJWT` is called. It is closure function that takes in the `getKeyFromEnv` which will read the JWT secret from the environment. It then returns a `ValidationHandler` function. When the request is made, the `validateJWT`'s inner function is run which will evaluate the JWT token and if it's valid, will pass control over to the next function. It will also pass the JWT's payload to the next function in the `args?: any` argument.
 
 Next the `compareReadBlogScope` function will run, which checks the JWT's payload for the `'blog:read'` value.
 
@@ -243,7 +206,7 @@ Authorization: Basic <base64(username:password)>
 
 The signature of the function looks like this
 ```ts
-export const validateBasicAuth = (validateCredentials: (username: string, password: string) => Promise<boolean>): ValidationHandler => async ([method, headers, params, query])
+export const validateBasicAuth = (validateCredentials: (username: string, password: string) => Promise<boolean>): ValidationHandler => async ([request, params, query])
 ```
 
 The `validateCredentials` gets passed the username/password as provided in the HTTP header. The function is expected to return a `Promise<boolean>` to indicate if the username/password match something on file. An implementation of this function could go to a LDAP server or any other authentication server, using the username/password provided to look up the user.
@@ -252,11 +215,6 @@ If the user is not found or the password is incorrect, an implementation of this
 
 The docker image has support for passing in the environment variables `BASIC_AUTH_USERNAME` and `BASIC_AUTH_PASSWORD`. The repo provides the function `getBasicAuthFromEnv` which will pick up these values and return in a tuple.
 
-It's not a good idea to pass these values in when running the image, so the Dockerfile has support for passing them in at build time by using.
-
-```sh
-docker build -t proxy-server --build-arg arg_ssh_key="$(cat $(pwd)/pem/key.pem)" --build-arg arg_ssh_cert="$(cat $(pwd)/pem/cert.pem)" --build-arg arg_basic_auth_username=<username> --build-arg arg_basic_auth_password=<password>.
-```
 
 The `getBasicAuthFromEnv` is more for development purposes as it is expecting there only to be one user available.
 
@@ -264,7 +222,12 @@ The `getBasicAuthFromEnv` is more for development purposes as it is expecting th
 
 ```sh
 docker build --target build -t testme .
-docker run --rm testme npm test
+docker run --rm testme deno test
+```
+
+or use docker compose
+```sh
+docker compose run --rm test   
 ```
 
 ## References
@@ -276,3 +239,67 @@ docker run --rm testme npm test
 
 
 
+---
+
+
+
+docker run --rm -p 3030:3030 -e SSH_KEY="$(cat $(pwd)/pem/ssh-key.pem)" -e SSH_CERT="$(cat $(pwd)/pem/ssh-cert.pem)" -e JWT_KEY="$(cat $(pwd)/pem/public.pem)"  deleteme
+
+
+
+
+### Public key
+```
+-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxZqlbdy6WZiRKD1eZ21n
+6ScDbV4X6ewrUtHtmOAw6XS1ncku0CL82GY0NwJYVbhm5W81+Mr4OAis7ICfIKp3
+jS84w0mqMOsFc9XuQTeO1H7ZO2AMCM75J3sikOZzgCKTD9aVLQwvznwqP7kWWo+/
+6wTJ9nH+V7QHgUWX9CoyUfa72HE6FDZ89NZpID6SklHUfVc3KQmNs69bAlqdGdLp
+UcoekOV1oBDs6jzgVqOi77tC6WNlo9nC6J6uuraHq9QtD61VIXryXP2WUfUSFMzF
+lvQm3ht4v3jlRGaV4TcjzBY4JiHN64ZpzfXJAtQF8gXuKodPaXZ6ujYIplVOU3Lj
+xwIDAQAB
+-----END PUBLIC KEY-----
+```
+
+### Private key
+```
+-----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDFmqVt3LpZmJEo
+PV5nbWfpJwNtXhfp7CtS0e2Y4DDpdLWdyS7QIvzYZjQ3AlhVuGblbzX4yvg4CKzs
+gJ8gqneNLzjDSaow6wVz1e5BN47Uftk7YAwIzvkneyKQ5nOAIpMP1pUtDC/OfCo/
+uRZaj7/rBMn2cf5XtAeBRZf0KjJR9rvYcToUNnz01mkgPpKSUdR9VzcpCY2zr1sC
+Wp0Z0ulRyh6Q5XWgEOzqPOBWo6Lvu0LpY2Wj2cLonq66toer1C0PrVUhevJc/ZZR
+9RIUzMWW9CbeG3i/eOVEZpXhNyPMFjgmIc3rhmnN9ckC1AXyBe4qh09pdnq6Ngim
+VU5TcuPHAgMBAAECggEBAMH5Tb0ruO4smwmCPIKQ3jj8KBwbCqSBRgH1uyOfp8Pz
+4jhyffao8cVHhqgdMDNtYeyFH9kK/WCb+4vpsssxK0w3d6QUUvHUMzUDYu84J4gm
+wP3NCeM3sVL1R/gvkF/PEMeyYBupY+Bw+FQ3T180zzNYLx0xx3e2bMuUUlbHeUAE
+l67qJsf3Lribld4HIAGozJeMwfIiQtkSlGjdDgAm5q2qR65lEfnvhSVYLAWD6Arb
+khpagdOK4APu32txFELCnuPGXr9Jx0hf5vwMW2wOYdWnDOrX/rDWxQpyO99ok/Ln
+UIyroxuLqd75YKAIkluhSZ3acOOwuafE+sjx5fPQKMkCgYEA5iFMUUvPdhoVL3/h
+wkcmRFYMx+0R1MKrTAa7VCDjf1SumVqztqJ97Nx+1BP6Tfw0MVgz4BqFwWHLhnVz
+zPahX9XOW+g9MxGtLqIkkrG0FKmQlnnqBEsi/D0uec7e5/kmMtp/CJlBQIVfIFpr
+u4C15yWxe/B9XKjb90Pi+olNJMUCgYEA29FQC8vSIHRDSVaVHNIAW+BHYmfKczcF
+msQMrCTBbxaA50llOYdnMRtj3RlaSO9LkP4PihCOxyayi6sJgBLS4tkU4QPSMEgd
+Lp6xtDXpjorFP93lc8RFFA0t14B6UqjDkvpzEmVGtB1ZN1Nsvff+Rpp+CjQIijH4
+uF87inA+JxsCgYAmKZdyU9QPjbu9qMNTaGEcK/jqnpG6ap3leahPBzUyxGQ/4h6z
+RrcDNH2DxdxYWl59YFcZ7swHiaQqpAeUEcIpFlemPhkIAwJpHVJbUUS/uG7VxVnd
+ZGhk0/CFGp00csi23iz6zA9aF8PypYwACBQiRMnt96+SUh5IHuXhDivQ0QKBgQCs
++Wnmzm28ciCcrlBKTIpRwgwKSKhLv6leXxWlxIqekvO+jMfl3EH8p5QO4Stlp0As
+iW/K8jqYRkBLnbytFqLyNWazpmEY8zZbgC9QIvh13YdYOZGcZn8BR1micgxPzVOQ
+7hntCNr5UvroiXJRjrt97YZvGwD5VldlJjNhPe/6rwKBgEDs2gMqIrjI+cH8UMHq
+GN5eZ6TbSboV/naxkBYn6DoEhBswr5tGKcbQczGuDzZX/lLjCxGNsfHRWAQ/QcHn
+GOS/FeBG4HrjIRjpknKjVd+gs7cJYuarWJAnTAMwm5wlfgaUyM2OsgxmnEB47in0
+LN2UqU1duKp1VBDfLtYLw0+U
+-----END PRIVATE KEY-----
+```
+
+### JWT
+```
+eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiYWRtaW4iOnRydWUsImlhdCI6MTUxNjIzOTAyMn0.Gpbd7uRpC32emuSflvIoVM1oSpvwUqgh4CTjlhnIOCuJX4AqbMXQqdo-ZUcyFeJasd5LQZwj6zxHvgEJmbePGsm9mkNIzccsEZ7Hx8ZOEib7v0Q6qU_t4z0yMiSeO01OogMCapb2TfM77DvXQtMREE_pTje2-lT2n20tdTb5Md2nkxlkduBRNKMHe0yRbQpBDPFl5RW9DC6XE47W5nqMxdwC0lskaxzSRHxnNbZbrO710ef_LYEpPeKGbz2RKGZm72WHO5vjUOuZKU8ZK68S1LcJleAqSwJ1O9F4ToDgMB8SQ1CJRnSL-v8oVmREDZbiAlkUnr1Ir_4C4TxSO2b0_w
+```
+
+
+### BasicAuth
+```
+"authorization": "Basic dXNlcm5hbWU6cGFzc3dvcmQ=",
+```

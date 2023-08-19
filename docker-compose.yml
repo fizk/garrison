@@ -1,0 +1,35 @@
+version: '3'
+
+services:
+    dev:
+        container_name: garrison-dev
+        build: .
+        ports:
+            - 3030:3030
+        volumes:
+            - ./src:/app/src
+        env_file: .env
+        depends_on:
+            - echo-server
+        command: run --watch  --allow-net --allow-env src/index.ts
+
+    echo-server:
+        container_name: garrison-dev-echo-server
+        image: mendhak/http-https-echo:26
+        environment:
+            - HTTP_PORT=8088
+            # - HTTPS_PORT=8443
+        ports:
+            - "8088:8088"
+            # - "8443:8443"
+
+    test:
+        container_name: garrison-test
+        build: 
+            context: .
+            target: test
+        volumes:
+            - ./src:/app/src
+            - ./test:/app/test
+        command: deno test
+        

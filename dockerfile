@@ -1,44 +1,39 @@
-#
-# COMPILE SOURCECODE
-#
-FROM node:20-alpine3.17 AS build
+FROM denoland/deno:ubuntu-1.36.1 as test
 
 WORKDIR /app
 
 COPY ./src /app/src
-COPY ./package.json /app/package.json
-COPY ./package-lock.json /app/package-lock.json
-COPY ./tsconfig.json /app/tsconfig.json
-COPY ./jest.config.js /app/jest.config.js
+COPY ./test /app/test
+RUN deno cache /app/src/index.ts
 
-RUN npm i; \
-    npm run build;
+FROM denoland/deno:ubuntu-1.36.1 as prod
 
-#
-# BUILDING PRODUCTION APPLICATION
-#
-FROM node:20-alpine3.17 AS production
+# The port that your application listens to.
+EXPOSE 3030
+
+ENV PORT=3030
+ENV REMOTE_SERVER=http://host.docker.internal:8083
 
 ARG arg_ssh_key
 ARG arg_ssh_cert
-ARG arg_jwt_secret
-ARG arg_basic_auth_username
-ARG arg_basic_auth_password
+ARG arg_jwt_key
 
-ENV SSH_KEY=$arg_ssh_key
-ENV SSH_CERT=$arg_ssh_cert
+ENV KEY=$arg_ssh_key
+ENV CERT=$arg_ssh_cert
+ENV JWT_KEY=$arg_jwt_key
 
-ENV JWT_SECRET=$arg_jwt_secret
-
-ENV BASIC_AUTH_USERNAME=$arg_basic_auth_username
-ENV BASIC_AUTH_PASSWORD=$arg_basic_auth_password
+ENV BASIC_AUTH_USERNAME=
+ENV BASIC_AUTH_PASSWORD=
 
 WORKDIR /app
 
-COPY --from=build /app/dist /app/src
-COPY ./package.json /app/package.json
-COPY ./package-lock.json /app/package-lock.json
+# Prefer not to run as root.
+USER deno
 
-RUN npm i --omit=dev;
+# Cache the dependencies as a layer (the following two steps are re-run only when deps.ts is modified).
+# Ideally cache deps.ts will download and compile _all_ external files used in main.ts.
+COPY ./src /app/src
+RUN deno cache /app/src/index.ts
 
-CMD [ "node", "/app/src/index.js" ]
+
+CMD ["run", "--allow-net", "--allow-env", "/app/src/index.ts"]
